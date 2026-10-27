@@ -4,7 +4,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "LANGSMITH_TRACING": "false"}):
+with patch.dict(os.environ, {
+    "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY") or "test-key",
+    "LANGSMITH_TRACING": "false",
+}):
     from gtm_agent import gtm_agent as agent
 
 
