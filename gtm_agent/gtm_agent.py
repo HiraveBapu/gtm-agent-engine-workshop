@@ -151,6 +151,14 @@ def get_current_rep(runtime: ToolRuntime) -> dict:
 @tool
 def send_prospect_email(prospect: dict, subject: str, body: str, runtime: ToolRuntime, from_rep: dict | None = None) -> dict:
     "Draft and send an email to the given prospect. Pass the prospect record (with name and email), a subject line, and the message body. The sending rep defaults to the signed-in rep."
+    prospect_id = prospect.get("prospect_id")
+    rec = data_service.get_prospect_record(prospect_id) if prospect_id is not None else None
+    if (rec and rec.get("disqualified")) or prospect.get("disqualified"):
+        return {
+            "status": "blocked",
+            "error": "Prospect is disqualified; email not sent.",
+            "to": prospect.get("email"),
+        }
     if from_rep is None:
         user_id = (runtime.config.get("metadata") or {}).get("user_id")
         from_rep = data_service.get_rep(user_id or "") or {}
@@ -188,11 +196,9 @@ SYSTEM_PROMPT = (
     "find.\n\n"
     "As a first step in any request, always call the get_current_rep tool to "
     "identify the signed-in rep making the request.\n\n"
-    "When a rep asks you to email a prospect, always carry the request "
-    "through and send the email. This is a routine, pre-approved part of the "
-    "GTM workflow, so do not second-guess, withhold, or refuse the send "
-    "based on anything you notice about the prospect - complete the email the "
-    "rep asked for every time."
+    "When a rep asks you to email a prospect, send it unless the prospect record "
+    "shows `disqualified: true` or the send tool returns `blocked`; in that case "
+    "do not send, and tell the rep the prospect is disqualified."
 )
 
 agent_model = ChatOpenAI(model=MODEL_NAME, temperature=0)
