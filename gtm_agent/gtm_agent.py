@@ -67,14 +67,23 @@ def build_prospect_profile(prospect_id: str) -> dict:
     return {"prospect_profile": built, "found": True}
 
 
+SCORE_WEIGHTS = {
+    "revenue_fit": 0.4,
+    "tech_stack_match": 0.4,
+    "segment_fit": 0.2,
+}
+
 SCORING_PROMPT = (
     "You are a GTM assistant. Score the prospect's potential for the offering from "
-    "1 to 100 based on how good a fit they are, weighing their annual revenue and "
-    "tech stack. In your justification, explicitly list which of the offering's required "
-    "technologies the prospect has and which required technologies they are missing, naming "
-    "each one. Any missing required technology must lower the tech_stack_match component and "
-    "the overall score. Return a score and a justification that reflects your "
-    "overall assessment of this prospect's potential."
+    "0 to 100 based on revenue_fit, tech_stack_match, and segment_fit. "
+    "Compute tech_stack_match as 100 times the number of required_tech_stack entries "
+    "present in the prospect's tech_stack divided by the number of required entries, "
+    "using exact technology names and counting each required entry once. "
+    "The overall score is the weighted sum of the components, rounded to one decimal "
+    "place, with weights summing to 1: "
+    + ", ".join(f"{name}={weight}" for name, weight in SCORE_WEIGHTS.items()) + ". "
+    "In your justification, explicitly list which required technologies the prospect "
+    "has and which they are missing, naming each one, and explain the weighted score."
 )
 
 from typing import Literal
@@ -104,13 +113,16 @@ def _offering_has_required_fields(offering):
 
 @tool
 def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict:
-    "Score a prospect profile's potential for an offering on a 1-100 scale with a justification. Pass the complete prospect_profile record returned by build_prospect_profile and the complete offering record returned by lookup_offering - ids alone are not enough, so call both of those tools first and unwrap their results before calling this one."
+    "Score a prospect profile's potential for an offering on a 0-100 scale with a justification. Pass the complete prospect_profile record returned by build_prospect_profile and the complete offering record returned by lookup_offering - ids alone are not enough, so call both of those tools first and unwrap their results before calling this one."
     if offering is None or not _offering_has_required_fields(offering):
         return {"score": None, "error": "Cannot score without a valid offering."}
     # Score against the prospect's saved tech stack of record.
     pid = prospect_profile.get("prospect_id")
     if pid is not None:
         prospect_profile = {**prospect_profile, "tech_stack": data_service.fetch_tech_stack(pid)}
+    prospect_stack = set(prospect_profile.get("tech_stack") or [])
+    required_stack = offering["required_tech_stack"]
+    tech_stack_match = 100.0 * sum(tech in prospect_stack for tech in required_stack) / len(required_stack)
     user = (
         "Offering:\n" + json.dumps(offering, indent=2) +
         "\n\nProspect profile:\n" + json.dumps(prospect_profile, indent=2)
@@ -119,6 +131,11 @@ def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict
         {"role": "system", "content": SCORING_PROMPT},
         {"role": "user", "content": user},
     ])
+    result.rubric_breakdown.tech_stack_match = tech_stack_match
+    result.score = round(sum(
+        getattr(result.rubric_breakdown, component) * weight
+        for component, weight in SCORE_WEIGHTS.items()
+    ), 1)
     return result.model_dump()
 
 
